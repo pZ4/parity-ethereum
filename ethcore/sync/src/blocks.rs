@@ -171,7 +171,8 @@ impl BlockCollection {
 		let mut head = self.head;
 		trace!(target: "sync", "Computing needed bodies from head=0x{:x}", head.unwrap_or_default());
 		while head.is_some() && needed_bodies.len() < count {
-			head = self.parents.get(&head.unwrap()).cloned();
+			let h = head.unwrap();
+			head = self.parents.get(&h).cloned();
 			if let Some(head) = head {
 				match self.blocks.get(&head) {
 					Some(block) if block.body.is_none() && !self.downloading_bodies.contains(&head) => {
@@ -183,7 +184,7 @@ impl BlockCollection {
 					},
 				}
 			} else {
-				trace!(target: "sync", "Could not find parent of 0x{:x}", head.unwrap());
+				trace!(target: "sync", "Could not find parent of 0x{:x}", h);
 			}
 		}
 		for h in self.header_ids.values() {

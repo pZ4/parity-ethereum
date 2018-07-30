@@ -687,12 +687,12 @@ impl ChainSync {
 			}
 		}
 
-		if
-			(self.state == SyncState::Blocks || self.state == SyncState::NewBlocks) &&
-			!self.peers.values().any(|p| p.asking != PeerAsking::Nothing && p.block_set != Some(BlockSet::OldBlocks) && p.can_sync())
-		{
-			self.complete_sync(io);
-		}
+		// if
+		// 	(self.state == SyncState::Blocks || self.state == SyncState::NewBlocks) &&
+		// 	!self.peers.values().any(|p| p.asking != PeerAsking::Nothing && p.block_set != Some(BlockSet::OldBlocks) && p.can_sync())
+		// {
+		// 	self.complete_sync(io);
+		// }
 	}
 
 	/// Called after all blocks have been downloaded
