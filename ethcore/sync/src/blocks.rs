@@ -169,6 +169,7 @@ impl BlockCollection {
 		}
 		let mut needed_bodies: Vec<H256> = Vec::new();
 		let mut head = self.head;
+		trace!(target: "sync", "Computing needed bodies from head=0x{:x}", head.unwrap_or_default());
 		while head.is_some() && needed_bodies.len() < count {
 			head = self.parents.get(&head.unwrap()).cloned();
 			if let Some(head) = head {
@@ -177,8 +178,12 @@ impl BlockCollection {
 						self.downloading_bodies.insert(head.clone());
 						needed_bodies.push(head.clone());
 					}
-					_ => (),
+					_ => {
+						trace!(target: "sync", "Could not get block 0x{:x}", head);
+					},
 				}
+			} else {
+				trace!(target: "sync", "Could not find parent of 0x{:x}", head.unwrap());
 			}
 		}
 		for h in self.header_ids.values() {
@@ -190,6 +195,7 @@ impl BlockCollection {
 				self.downloading_bodies.insert(h.clone());
 			}
 		}
+		trace!(target: "sync", "Needed bodies {}", needed_bodies.len());
 		needed_bodies
 	}
 
