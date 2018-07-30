@@ -275,7 +275,10 @@ impl BlockCollection {
 		{
 			let mut blocks = Vec::new();
 			let mut head = self.head;
+			let mut last_head = head.clone().unwrap_or_default();
+			trace!(target: "sync", "Starting draining at head 0x{:x}", head.unwrap_or_default());
 			while let Some(h) = head {
+				last_head = h.clone();
 				head = self.parents.get(&h).cloned();
 				if let Some(head) = head {
 					match self.blocks.get(&head) {
@@ -284,10 +287,16 @@ impl BlockCollection {
 							hashes.push(head);
 							self.head = Some(head);
 						}
-						_ => break,
+						_ => {
+							trace!(target: "sync", "Could not find block 0x{:x}", head);
+							break;
+						},
 					}
+				} else {
+					trace!(target: "sync", "Could not find parent of 0x{:x}", h);
 				}
 			}
+			trace!(target: "sync", "Ended draining at head 0x{:x}", last_head);
 
 			for block in blocks {
 				let body = view!(BodyView, block.body.as_ref().expect("blocks contains only full blocks; qed"));
