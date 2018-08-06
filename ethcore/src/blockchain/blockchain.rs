@@ -643,6 +643,43 @@ impl BlockChain {
 			}
 		}
 
+		{
+			info!("Verifying the blockchain...");
+
+			let mut current_hash = best_block_hash.clone();
+
+			loop {
+				let b = db.key_value().get(db::COL_HEADERS, &current_hash)
+					.expect("Low level database error when fetching block header data. Some issue with disk?");
+
+				match b {
+					None => {
+						warn!("Could not find block in DB ; hash=0x{:x}", current_hash);
+						break;
+					},
+					Some(bytes) => {
+						let header = encoded::Header::new(decompress(&bytes, blocks_swapper()).into_vec());
+						let block_number = header.number();
+
+						match db.key_value().read(db::COL_EXTRA, &BlockNumber::from(block_number)) as Option<H256> {
+							None => {
+								warn!("Could not find block in DB ; num={} ; hash=0x{:x}", block_number, current_hash);
+								break;
+							},
+							Some(linked_hash) => {
+								if linked_hash != current_hash {
+									warn!("Wrong block in DB ; num={} ; 0x{:x} != 0x{:x}", block_number, current_hash, linked_hash);
+									break;
+								}
+							},
+						}
+
+						current_hash = header.parent_hash();
+					},
+				}
+			}
+		}
+
 		bc
 	}
 
