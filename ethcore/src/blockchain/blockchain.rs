@@ -643,12 +643,22 @@ impl BlockChain {
 			}
 		}
 
+		// Verify that all blocks are linked both ways (by number, and by parent's hash)
+		// going from the best block to the first block of the chain
 		{
 			info!("Verifying the blockchain...");
 
 			let mut current_hash = best_block_hash.clone();
+			let mut last_known_good_hash = current_hash.clone();
+			let mut success = false;
+			let target_hash = bc.first_block.unwrap_or_default();
 
 			loop {
+				if current_hash == target_hash {
+					success = true;
+					break;
+				}
+
 				let b = db.key_value().get(db::COL_HEADERS, &current_hash)
 					.expect("Low level database error when fetching block header data. Some issue with disk?");
 
@@ -660,6 +670,10 @@ impl BlockChain {
 					Some(bytes) => {
 						let header = encoded::Header::new(decompress(&bytes, blocks_swapper()).into_vec());
 						let block_number = header.number();
+
+						if block_number % 10_000 == 0 {
+							info!("  Verifying block {}", block_number);
+						}
 
 						match db.key_value().read(db::COL_EXTRA, &BlockNumber::from(block_number)) as Option<H256> {
 							None => {
@@ -674,10 +688,18 @@ impl BlockChain {
 							},
 						}
 
+						last_known_good_hash = current_hash.clone();
 						current_hash = header.parent_hash();
 					},
 				}
 			}
+
+			if !success {
+				info!("Setting first block to 0x{:x}", last_known_good_hash);
+				// bc.first_block = Some(last_known_good_hash);
+			}
+
+			info!("Done verifying the blockchain.");
 		}
 
 		bc
