@@ -16,7 +16,7 @@
 
 //! Engine deserialization.
 
-use super::{Ethash, BasicAuthority, AuthorityRound, Tendermint, NullEngine};
+use super::{Ethash, BasicAuthority, AuthorityRound, Tendermint, NullEngine, TLEngine};
 
 /// Engine deserialization.
 #[derive(Debug, PartialEq, Deserialize)]
@@ -37,7 +37,10 @@ pub enum Engine {
 	AuthorityRound(AuthorityRound),
 	/// Tendermint engine.
 	#[serde(rename="tendermint")]
-	Tendermint(Tendermint)
+	Tendermint(Tendermint),
+    /// TLEngine
+    #[serde(rename="tlengine")]
+    TLEngine(TLEngine)
 }
 
 #[cfg(test)]
@@ -58,6 +61,20 @@ mod tests {
 		let deserialized: Engine = serde_json::from_str(s).unwrap();
 		match deserialized {
 			Engine::Null(_) => {}, // unit test in its own file.
+			_ => panic!(),
+		}
+
+		let s = r#"{
+			"tlengine": {
+				"params": {
+					"blockReward": "0x0d"
+				}
+			}
+		}"#;
+
+		let deserialized: Engine = serde_json::from_str(s).unwrap();
+		match deserialized {
+			Engine::TLEngine(_) => {}, // unit test in its own file.
 			_ => panic!(),
 		}
 

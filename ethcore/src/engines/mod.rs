@@ -25,6 +25,7 @@ mod tendermint;
 mod transition;
 mod validator_set;
 mod vote_collector;
+mod tl_engine;
 
 pub mod block_reward;
 pub mod epoch;
@@ -35,6 +36,7 @@ pub use self::epoch::{EpochVerifier, Transition as EpochTransition};
 pub use self::instant_seal::InstantSeal;
 pub use self::null_engine::NullEngine;
 pub use self::tendermint::Tendermint;
+pub use self::tl_engine::TLEngine;
 
 use std::sync::{Weak, Arc};
 use std::collections::{BTreeMap, HashMap};
