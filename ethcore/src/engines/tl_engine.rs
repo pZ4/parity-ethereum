@@ -53,11 +53,16 @@ impl TLEngine {
 	}
 }
 
+// see https://github.com/paritytech/parity-ethereum/blob/master/ethcore/src/engines/mod.rs#L195
+// to check what does what
 impl Engine<EthereumMachine> for TLEngine {
+
+	/// The name of this engine.
 	fn name(&self) -> &str {
 		"TLEngine"
 	}
 
+	/// Get access to the underlying state machine.
 	fn machine(&self) -> &EthereumMachine { &self.machine }
 
 	fn fork_choice(&self, new: &ExtendedHeader, current: &ExtendedHeader) -> super::ForkChoice {
