@@ -25,6 +25,8 @@ mod tendermint;
 mod transition;
 mod validator_set;
 mod vote_collector;
+// TODO: remove
+#[allow(unused_imports)]
 mod tl_engine;
 
 pub mod block_reward;

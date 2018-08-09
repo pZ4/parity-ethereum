@@ -14,12 +14,13 @@
 // You should have received a copy of the GNU General Public License
 // along with Parity.  If not, see <http://www.gnu.org/licenses/>.
 
+
+use error::Error;
 use ethereum_types::U256;
 use engines::Engine;
 use engines::block_reward::{self, RewardKind};
-use header::BlockNumber;
-use machine::WithRewards;
-use parity_machine::{Header, LiveBlock, WithBalances, TotalScoredHeader};
+use header::{Header, ExtendedHeader, BlockNumber};
+use machine::{EthereumMachine};
 
 /// Params for a null engine.
 #[derive(Clone, Default)]
@@ -37,14 +38,14 @@ impl From<::ethjson::spec::TLEngineParams> for TLEngineParams {
 }
 
 /// An engine which does not provide any consensus mechanism and does not seal blocks.
-pub struct TLEngine<M> {
+pub struct TLEngine {
 	params: TLEngineParams,
-	machine: M,
+	machine: EthereumMachine,
 }
 
-impl<M> TLEngine<M> {
+impl TLEngine {
 	/// Returns new instance of TLEngine with default VM Factory
-	pub fn new(params: TLEngineParams, machine: M) -> Self {
+	pub fn new(params: TLEngineParams, machine: EthereumMachine) -> Self {
 		TLEngine {
 			params: params,
 			machine: machine,
@@ -52,60 +53,18 @@ impl<M> TLEngine<M> {
 	}
 }
 
-impl<M: Default> Default for TLEngine<M> {
-	fn default() -> Self {
-		Self::new(Default::default(), Default::default())
-	}
-}
-
-impl<M: WithBalances + WithRewards> Engine<M> for TLEngine<M>
-  where M::ExtendedHeader: TotalScoredHeader,
-        <M::ExtendedHeader as TotalScoredHeader>::Value: Ord
-{
+impl Engine<EthereumMachine> for TLEngine {
 	fn name(&self) -> &str {
 		"TLEngine"
 	}
 
-	fn machine(&self) -> &M { &self.machine }
+	fn machine(&self) -> &EthereumMachine { &self.machine }
 
-	fn on_close_block(&self, block: &mut M::LiveBlock) -> Result<(), M::Error> {
-		use std::ops::Shr;
-
-		let author = *LiveBlock::header(&*block).author();
-		let number = LiveBlock::header(&*block).number();
-
-		let reward = self.params.block_reward;
-		if reward == U256::zero() { return Ok(()) }
-
-		let n_uncles = LiveBlock::uncles(&*block).len();
-
-		let mut rewards = Vec::new();
-
-		// Bestow block reward
-		let result_block_reward = reward + reward.shr(5) * U256::from(n_uncles);
-		rewards.push((author, RewardKind::Author, result_block_reward));
-
-		// bestow uncle rewards.
-		for u in LiveBlock::uncles(&*block) {
-			let uncle_author = u.author();
-			let result_uncle_reward = (reward * U256::from(8 + u.number() - number)).shr(3);
-			rewards.push((*uncle_author, RewardKind::Uncle, result_uncle_reward));
-		}
-
-		block_reward::apply_block_rewards(&rewards, block, &self.machine)
-	}
-
-	fn maximum_uncle_count(&self, _block: BlockNumber) -> usize { 2 }
-
-	fn verify_local_seal(&self, _header: &M::Header) -> Result<(), M::Error> {
-		Ok(())
-	}
-
-	fn snapshot_components(&self) -> Option<Box<::snapshot::SnapshotComponents>> {
-		Some(Box::new(::snapshot::PowSnapshot::new(10000, 10000)))
-	}
-
-	fn fork_choice(&self, new: &M::ExtendedHeader, current: &M::ExtendedHeader) -> super::ForkChoice {
+	fn fork_choice(&self, new: &ExtendedHeader, current: &ExtendedHeader) -> super::ForkChoice {
 		super::total_difficulty_fork_choice(new, current)
+	}
+
+	fn verify_local_seal(&self, _header: &Header) -> Result<(), Error> {
+		Ok(())
 	}
 }
