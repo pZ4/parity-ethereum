@@ -139,6 +139,8 @@ pub struct CommonParams {
 	pub max_code_size_transition: BlockNumber,
 	/// Transaction permission managing contract address.
 	pub transaction_permission_contract: Option<Address>,
+	/// Block at which the transaction permission contract should start being used.
+	pub transaction_permission_contract_transition: BlockNumber,
 	/// Maximum size of transaction's RLP payload
 	pub max_transaction_size: usize,
 }
@@ -296,6 +298,8 @@ impl From<ethjson::spec::Params> for CommonParams {
 			max_transaction_size: p.max_transaction_size.map_or(MAX_TRANSACTION_SIZE, Into::into),
 			max_code_size_transition: p.max_code_size_transition.map_or(0, Into::into),
 			transaction_permission_contract: p.transaction_permission_contract.map(Into::into),
+			transaction_permission_contract_transition:
+				p.transaction_permission_contract_transition.map_or(0, Into::into),
 			wasm_activation_transition: p.wasm_activation_transition.map_or_else(
 				BlockNumber::max_value,
 				Into::into
@@ -652,7 +656,7 @@ impl Spec {
 					let machine = self.engine.machine();
 					let schedule = machine.schedule(env_info.number);
 					let mut exec = Executive::new(&mut state, &env_info, &machine, &schedule);
-					if let Err(e) = exec.create(params, &mut substate, &mut None, &mut NoopTracer, &mut NoopVMTracer) {
+					if let Err(e) = exec.create(params, &mut substate, &mut NoopTracer, &mut NoopVMTracer) {
 						warn!(target: "spec", "Genesis constructor execution at {} failed: {}.", address, e);
 					}
 				}
@@ -765,6 +769,11 @@ impl Spec {
 		)?;
 
 		Ok(())
+	}
+
+	/// Return genesis state as Plain old data.
+	pub fn genesis_state(&self) -> &PodState {
+		&self.genesis_state
 	}
 
 	/// Returns `false` if the memoized state root is invalid. `true` otherwise.
