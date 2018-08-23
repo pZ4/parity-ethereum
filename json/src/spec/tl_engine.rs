@@ -22,8 +22,8 @@ use uint::Uint;
 #[derive(Debug, PartialEq, Deserialize)]
 pub struct TLEngineParams {
 	/// Block reward.
-	#[serde(rename="blockReward")]
-	pub block_reward: Option<Uint>,
+	#[serde(rename="unused")]
+	pub _unused: Option<i64>,
 }
 
 /// TL engine descriptor
@@ -44,11 +44,11 @@ mod tests {
 	fn tl_engine_deserialization() {
 		let s = r#"{
 			"params": {
-				"blockReward": "0x0d"
+				"unused": "1"
 			}
 		}"#;
 
 		let deserialized: TLEngine = serde_json::from_str(s).unwrap();
-		assert_eq!(deserialized.params.block_reward, Some(Uint(U256::from(0x0d))));
+		assert_eq!(deserialized.params._unused, Some(1));
 	}
 }

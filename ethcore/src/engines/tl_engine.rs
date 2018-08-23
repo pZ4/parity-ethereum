@@ -14,62 +14,114 @@
 // You should have received a copy of the GNU General Public License
 // along with Parity.  If not, see <http://www.gnu.org/licenses/>.
 
-
 use error::Error;
-use ethereum_types::U256;
-use engines::Engine;
-use engines::block_reward::{self, RewardKind};
+use engines::{Engine, Seal};
 use header::{Header, ExtendedHeader, BlockNumber};
 use machine::{EthereumMachine};
+use parity_machine::Machine;
+use block::ExecutedBlock;
 
 /// Params for a null engine.
 #[derive(Clone, Default)]
 pub struct TLEngineParams {
-	/// base reward for a block.
-	pub block_reward: U256,
+	/// unused for now
+	pub _unused: i64,
 }
 
-impl From<::ethjson::spec::TLEngineParams> for TLEngineParams {
-	fn from(p: ::ethjson::spec::TLEngineParams) -> Self {
-		TLEngineParams {
-			block_reward: p.block_reward.map_or_else(Default::default, Into::into),
-		}
-	}
-}
-
-/// An engine which does not provide any consensus mechanism and does not seal blocks.
+/// An engine which does not provide any consensus mechanism, just seals blocks internally.
+/// Only seals blocks which have transactions.
 pub struct TLEngine {
 	params: TLEngineParams,
 	machine: EthereumMachine,
 }
 
-impl TLEngine {
-	/// Returns new instance of TLEngine with default VM Factory
-	pub fn new(params: TLEngineParams, machine: EthereumMachine) -> Self {
-		TLEngine {
-			params: params,
-			machine: machine,
+impl From<::ethjson::spec::TLEngineParams> for TLEngineParams {
+	fn from(p: ::ethjson::spec::TLEngineParams) -> Self {
+		TLEngineParams {
+			_unused: p._unused.map_or_else(Default::default, Into::into),
 		}
 	}
 }
 
-// see https://github.com/paritytech/parity-ethereum/blob/master/ethcore/src/engines/mod.rs#L195
-// to check what does what
-impl Engine<EthereumMachine> for TLEngine {
+impl TLEngine {
+	/// Returns new instance of TLEngine over the given state machine.
+	pub fn new(params: TLEngineParams, machine: EthereumMachine) -> Self {
+		println!("THIS IS THE WAY");
+		TLEngine {
+			machine,
+			params,
+		}
+	}
+}
 
-	/// The name of this engine.
+impl Engine<EthereumMachine> for TLEngine
+{
 	fn name(&self) -> &str {
 		"TLEngine"
 	}
 
-	/// Get access to the underlying state machine.
 	fn machine(&self) -> &EthereumMachine { &self.machine }
 
-	fn fork_choice(&self, new: &ExtendedHeader, current: &ExtendedHeader) -> super::ForkChoice {
-		super::total_difficulty_fork_choice(new, current)
+	fn seals_internally(&self) -> Option<bool> { Some(true) }
+
+	fn generate_seal(&self, block: &ExecutedBlock, _parent: &Header) -> Seal {
+		println!("this is the second way");
+		if block.transactions.is_empty() { Seal::None } else { Seal::Regular(Vec::new()) }
 	}
 
 	fn verify_local_seal(&self, _header: &Header) -> Result<(), Error> {
 		Ok(())
+	}
+
+	fn open_block_header_timestamp(&self, parent_timestamp: u64) -> u64 {
+		use std::{time, cmp};
+
+		let now = time::SystemTime::now().duration_since(time::UNIX_EPOCH).unwrap_or_default();
+		cmp::max(now.as_secs(), parent_timestamp)
+	}
+
+	fn is_timestamp_valid(&self, header_timestamp: u64, parent_timestamp: u64) -> bool {
+		header_timestamp >= parent_timestamp
+	}
+
+	fn fork_choice(&self, new: &ExtendedHeader, current: &ExtendedHeader) -> super::ForkChoice {
+		super::total_difficulty_fork_choice(new, current)
+	}
+}
+
+#[cfg(test)]
+mod tests {
+	use std::sync::Arc;
+	use ethereum_types::{H520, Address};
+	use test_helpers::get_temp_state_db;
+	use spec::Spec;
+	use header::Header;
+	use block::*;
+	use engines::Seal;
+
+	#[test]
+	fn instant_can_seal() {
+		let spec = Spec::new_instant();
+		let engine = &*spec.engine;
+		let db = spec.ensure_db_good(get_temp_state_db(), &Default::default()).unwrap();
+		let genesis_header = spec.genesis_header();
+		let last_hashes = Arc::new(vec![genesis_header.hash()]);
+		let b = OpenBlock::new(engine, Default::default(), false, db, &genesis_header, last_hashes, Address::default(), (3141562.into(), 31415620.into()), vec![], false, &mut Vec::new().into_iter()).unwrap();
+		let b = b.close_and_lock().unwrap();
+		if let Seal::Regular(seal) = engine.generate_seal(b.block(), &genesis_header) {
+			assert!(b.try_seal(engine, seal).is_ok());
+		}
+	}
+
+	#[test]
+	fn instant_cant_verify() {
+		let engine = Spec::new_instant().engine;
+		let mut header: Header = Header::default();
+
+		assert!(engine.verify_block_basic(&header).is_ok());
+
+		header.set_seal(vec![::rlp::encode(&H520::default()).into_vec()]);
+
+		assert!(engine.verify_block_unordered(&header).is_ok());
 	}
 }
