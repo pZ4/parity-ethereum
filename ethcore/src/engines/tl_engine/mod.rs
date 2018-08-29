@@ -713,6 +713,7 @@ impl TLEngine {
 	}
 
 	fn generate_empty_step(&self, parent_hash: &H256) {
+		println!("generate_empty_step");
 		let step = self.step.inner.load();
 		let empty_step_rlp = empty_step_rlp(step, parent_hash);
 
@@ -732,6 +733,7 @@ impl TLEngine {
 	}
 
 	fn broadcast_message(&self, message: Vec<u8>) {
+		println!("Broadcasting message ");
 		if let Some(ref weak) = *self.client.read() {
 			if let Some(c) = weak.upgrade() {
 				c.broadcast_consensus_message(message);
@@ -880,6 +882,7 @@ impl Engine<EthereumMachine> for TLEngine {
 	}
 
 	fn handle_message(&self, rlp: &[u8]) -> Result<(), EngineError> {
+		println!("Message received");
 		fn fmt_err<T: ::std::fmt::Debug>(x: T) -> EngineError {
 			EngineError::MalformedMessage(format!("{:?}", x))
 		}
