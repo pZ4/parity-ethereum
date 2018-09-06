@@ -171,6 +171,7 @@ impl Engine<EthereumMachine> for TLEngine{
 	}
 }
 
+/// tests from the instant seal consensus
 #[cfg(test)]
 mod tests {
 	use std::sync::Arc;
@@ -182,8 +183,8 @@ mod tests {
 	use engines::Seal;
 
 	#[test]
-	fn instant_can_seal() {
-		let spec = Spec::new_instant();
+	fn tlengine_can_seal() {
+		let spec = Spec::new_tlengine();
 		let engine = &*spec.engine;
 		let db = spec.ensure_db_good(get_temp_state_db(), &Default::default()).unwrap();
 		let genesis_header = spec.genesis_header();
@@ -196,8 +197,8 @@ mod tests {
 	}
 
 	#[test]
-	fn instant_cant_verify() {
-		let engine = Spec::new_instant().engine;
+	fn tlengine_cant_verify() {
+		let engine = Spec::new_tlengine().engine;
 		let mut header: Header = Header::default();
 
 		assert!(engine.verify_block_basic(&header).is_ok());
