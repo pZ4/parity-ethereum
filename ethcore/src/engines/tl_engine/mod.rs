@@ -14,7 +14,7 @@
 // You should have received a copy of the GNU General Public License
 // along with Parity.  If not, see <http://www.gnu.org/licenses/>.
 
-//! A blockchain engine that supports a non-instant BFT proof-of-authority.
+//! An instant sealing consensus that gossips each time a block is sealed.
 
 use std::collections::{BTreeMap, HashSet};
 use std::fmt;
@@ -37,7 +37,6 @@ use hash::keccak;
 use header::{Header, BlockNumber, ExtendedHeader};
 use super::signer::EngineSigner;
 use super::validator_set::{ValidatorSet, SimpleList, new_validator_set};
-use self::finality::RollingFinality;
 use ethkey::{self, Password, Signature};
 use io::{IoContext, IoHandler, TimerToken, IoService};
 use itertools::{self, Itertools};
@@ -46,65 +45,15 @@ use ethereum_types::{H256, H520, Address, U128, U256};
 use parking_lot::{Mutex, RwLock};
 use unexpected::{Mismatch, OutOfBounds};
 
-mod finality;
-
 /// `TLEngine` params.
 pub struct TLEngineParams {
-	/// Time to wait before next block or authority switching,
-	/// in seconds.
-	///
-	/// Deliberately typed as u16 as too high of a value leads
-	/// to slow block issuance.
-	pub step_duration: u16,
-	/// Starting step,
-	pub start_step: Option<u64>,
-	/// Valid validators.
-	pub validators: Box<ValidatorSet>,
-	/// Chain score validation transition block.
-	pub validate_score_transition: u64,
-	/// Monotonic step validation transition block.
-	pub validate_step_transition: u64,
-	/// Immediate transitions.
-	pub immediate_transitions: bool,
-	/// Block reward in base units.
-	pub block_reward: U256,
-	/// Block reward contract transition block.
-	pub block_reward_contract_transition: u64,
-	/// Block reward contract.
-	pub block_reward_contract: Option<BlockRewardContract>,
-	/// Number of accepted uncles transition block.
-	pub maximum_uncle_count_transition: u64,
-	/// Number of accepted uncles.
-	pub maximum_uncle_count: usize,
-	/// Empty step messages transition block.
-	pub empty_steps_transition: u64,
-	/// Number of accepted empty steps.
-	pub maximum_empty_steps: usize,
+	pub value: u64,
 }
-
-const U16_MAX: usize = ::std::u16::MAX as usize;
 
 impl From<ethjson::spec::TLEngineParams> for TLEngineParams {
 	fn from(p: ethjson::spec::TLEngineParams) -> Self {
-		let mut step_duration_usize: usize = p.step_duration.into();
-		if step_duration_usize > U16_MAX {
-			step_duration_usize = U16_MAX;
-			warn!(target: "engine", "step_duration is too high ({}), setting it to {}", step_duration_usize, U16_MAX);
-		}
 		TLEngineParams {
-			step_duration: step_duration_usize as u16,
-			validators: new_validator_set(p.validators),
-			start_step: p.start_step.map(Into::into),
-			validate_score_transition: p.validate_score_transition.map_or(0, Into::into),
-			validate_step_transition: p.validate_step_transition.map_or(0, Into::into),
-			immediate_transitions: p.immediate_transitions.unwrap_or(false),
-			block_reward: p.block_reward.map_or_else(Default::default, Into::into),
-			block_reward_contract_transition: p.block_reward_contract_transition.map_or(0, Into::into),
-			block_reward_contract: p.block_reward_contract_address.map(BlockRewardContract::new),
-			maximum_uncle_count_transition: p.maximum_uncle_count_transition.map_or(0, Into::into),
-			maximum_uncle_count: p.maximum_uncle_count.map_or(0, Into::into),
-			empty_steps_transition: p.empty_steps_transition.map_or(u64::max_value(), |n| ::std::cmp::max(n.into(), 1)),
-			maximum_empty_steps: p.maximum_empty_steps.map_or(0, Into::into),
+			value: p.value.map_or(0, Into::into),
 		}
 	}
 }
@@ -135,94 +84,30 @@ impl Encodable for SimpleMessage {
 
 /// Engine using `TLEngine` proof-of-authority BFT consensus.
 pub struct TLEngine {
-	transition_service: IoService<()>,
 	client: Arc<RwLock<Option<Weak<EngineClient>>>>,
-	signer: RwLock<EngineSigner>,
-	validators: Box<ValidatorSet>,
-	validate_score_transition: u64,
-	validate_step_transition: u64,
-	immediate_transitions: bool,
-	block_reward: U256,
-	block_reward_contract_transition: u64,
-	block_reward_contract: Option<BlockRewardContract>,
-	maximum_uncle_count_transition: u64,
-	maximum_uncle_count: usize,
-	empty_steps_transition: u64,
-	maximum_empty_steps: usize,
 	machine: EthereumMachine,
+	value: u64,
 }
 
 
 impl TLEngine {
 	/// Create a new instance of TLEngine engine.
 	pub fn new(our_params: TLEngineParams, machine: EthereumMachine) -> Result<Arc<Self>, Error> {
-		if our_params.step_duration == 0 {
-			error!(target: "engine", "Authority Round step duration can't be zero, aborting");
-			panic!("authority_round: step duration can't be zero")
-		}
-		let should_timeout = our_params.start_step.is_none();
 		let engine = Arc::new(
 			TLEngine {
-				transition_service: IoService::<()>::start()?,
 				client: Arc::new(RwLock::new(None)),
-				signer: Default::default(),
-				validators: our_params.validators,
-				validate_score_transition: our_params.validate_score_transition,
-				validate_step_transition: our_params.validate_step_transition,
-				immediate_transitions: our_params.immediate_transitions,
-				block_reward: our_params.block_reward,
-				block_reward_contract_transition: our_params.block_reward_contract_transition,
-				block_reward_contract: our_params.block_reward_contract,
-				maximum_uncle_count_transition: our_params.maximum_uncle_count_transition,
-				maximum_uncle_count: our_params.maximum_uncle_count,
-				empty_steps_transition: our_params.empty_steps_transition,
-				maximum_empty_steps: our_params.maximum_empty_steps,
+				value: our_params.value,
 				machine: machine,
 			});
 
-		// Do not initialize timeouts for tests.
-		if should_timeout {
-			let handler = TransitionHandler {
-				client: engine.client.clone(),
-			};
-			engine.transition_service.register_handler(Arc::new(handler))?;
-		}
 		Ok(engine)
 	}
 
 	fn broadcast_message(&self, message: Vec<u8>) {
-		println!("Broadcasting message {:?}", message);
 		if let Some(ref weak) = *self.client.read() {
 			if let Some(c) = weak.upgrade() {
 				c.broadcast_consensus_message(message);
 			}
-		}
-	}
-}
-
-
-struct TransitionHandler {
-	client: Arc<RwLock<Option<Weak<EngineClient>>>>,
-}
-
-const ENGINE_TIMEOUT_TOKEN: TimerToken = 23;
-
-impl IoHandler<()> for TransitionHandler {
-	fn initialize(&self, io: &IoContext<()>) {
-		let remaining = 2000;
-		io.register_timer_once(ENGINE_TIMEOUT_TOKEN, Duration::from_millis(remaining))
-			.unwrap_or_else(|e| warn!(target: "engine", "Failed to start consensus step timer: {}.", e))
-	}
-
-	fn timeout(&self, io: &IoContext<()>, timer: TimerToken) {
-		if timer == ENGINE_TIMEOUT_TOKEN {
-			// NOTE we might be lagging by couple of steps in case the timeout
-			// has not been called fast enough.
-			// Make sure to advance up to the actual step.
-
-			let next_run_at = 2000 >> 2;
-			io.register_timer_once(ENGINE_TIMEOUT_TOKEN, Duration::from_millis(next_run_at))
-				.unwrap_or_else(|e| warn!(target: "engine", "Failed to restart consensus step timer: {}.", e))
 		}
 	}
 }
@@ -244,7 +129,7 @@ impl Engine<EthereumMachine> for TLEngine{
 	fn generate_seal(&self, block: &ExecutedBlock, _parent: &Header) -> Seal {
 		//custom to send message
 		{
-			let message = SimpleMessage{value: 12, signature: H520::default()};
+			let message = SimpleMessage{value: self.value, signature: H520::default()};
 			println!("Sending message {:?}", message);
 			let mut s = RlpStream::new_list(1);
 			s.append(&message);
@@ -272,24 +157,53 @@ impl Engine<EthereumMachine> for TLEngine{
 
 	/// necessary in order to receive messages
 	fn handle_message(&self, rlp: &[u8]) -> Result<(), EngineError> {
-		println!("handle_message");
+		println!("Handling message");
 		fn fmt_err<T: ::std::fmt::Debug>(x: T) -> EngineError {
-			println!("malformed message");
+			println!("Malformed message");
 			EngineError::MalformedMessage(format!("{:?}", x))
 		}
 
 		let rlp = Rlp::new(rlp);
-		let simpleMessage: SimpleMessage = rlp.as_val().map_err(fmt_err)?;
-		println!("Message received {:?}", simpleMessage);
+		let simple_message: SimpleMessage = rlp.as_val().map_err(fmt_err)?;
+		println!("Message received {:?}", simple_message);
 
 		Ok(())
-	}
-
-	fn step(&self) {
-		println!("step");
 	}
 }
 
 #[cfg(test)]
 mod tests {
+	use std::sync::Arc;
+	use ethereum_types::{H520, Address};
+	use test_helpers::get_temp_state_db;
+	use spec::Spec;
+	use header::Header;
+	use block::*;
+	use engines::Seal;
+
+	#[test]
+	fn instant_can_seal() {
+		let spec = Spec::new_instant();
+		let engine = &*spec.engine;
+		let db = spec.ensure_db_good(get_temp_state_db(), &Default::default()).unwrap();
+		let genesis_header = spec.genesis_header();
+		let last_hashes = Arc::new(vec![genesis_header.hash()]);
+		let b = OpenBlock::new(engine, Default::default(), false, db, &genesis_header, last_hashes, Address::default(), (3141562.into(), 31415620.into()), vec![], false, &mut Vec::new().into_iter()).unwrap();
+		let b = b.close_and_lock().unwrap();
+		if let Seal::Regular(seal) = engine.generate_seal(b.block(), &genesis_header) {
+			assert!(b.try_seal(engine, seal).is_ok());
+		}
+	}
+
+	#[test]
+	fn instant_cant_verify() {
+		let engine = Spec::new_instant().engine;
+		let mut header: Header = Header::default();
+
+		assert!(engine.verify_block_basic(&header).is_ok());
+
+		header.set_seal(vec![::rlp::encode(&H520::default()).into_vec()]);
+
+		assert!(engine.verify_block_unordered(&header).is_ok());
+	}
 }
