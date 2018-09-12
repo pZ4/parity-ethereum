@@ -16,14 +16,14 @@
 
 //! Authority params deserialization.
 
-use ethereum_types::Address;
 use uint::Uint;
-use super::ValidatorSet;
+use std::collections::BTreeMap;
 
 /// Authority params deserialization.
 #[derive(Debug, PartialEq, Deserialize)]
 pub struct TLEngineParams {
 	pub value: Option<Uint>,
+	pub validators: BTreeMap<String, f64>,
 }
 
 /// Authority engine deserialization.
@@ -35,22 +35,45 @@ pub struct TLEngine {
 
 #[cfg(test)]
 mod tests {
-	use ethereum_types::{U256, H160};
 	use uint::Uint;
 	use serde_json;
-	use hash::Address;
 	use spec::tl_engine::TLEngine;
 
 	#[test]
-	fn authority_round_deserialization() {
+	fn tl_params_deserialization() {
 		let s = r#"{
 			"params": {
-				"value": 1
+				"value": 1,
+				"validators": {
+					"0xc6d9d2cd449a754c494264e1809c50e34d64562b": 1.2,
+					"0xd6d9d2cd449a754c494264e1809c50e34d64562b": 0.2
+				}
 			}
 		}"#;
 
 		let deserialized: TLEngine = serde_json::from_str(s).unwrap();
 		assert_eq!(deserialized.params.value, Some(Uint(1.into())));
 
+		if let Some(weight_c) = deserialized.params.validators.get("0xc6d9d2cd449a754c494264e1809c50e34d64562b") {
+			assert_eq!(*weight_c, 1.2 as f64);
+		}
+		else {
+			panic!("Weight for 0xc6d9d2cd449a754c494264e1809c50e34d64562b not found");
+		}
+
+		if let Some(weight_d) = deserialized.params.validators.get("0xd6d9d2cd449a754c494264e1809c50e34d64562b") {
+			assert_eq!(*weight_d, 0.2 as f64);
+		}
+		else {
+			panic!("Weight for 0xd6d9d2cd449a754c494264e1809c50e34d64562b not found");
+		}
+
+		// is the "if let None" ugly?
+		if let None = deserialized.params.validators.get("not found") {
+			assert!(true);
+		}
+		else {
+			panic!("Should not be able to find a validator")
+		}
 	}
 }

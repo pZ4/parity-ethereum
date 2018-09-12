@@ -67,7 +67,11 @@ mod tests {
 		let s = r#"{
 			"tlengine": {
 				"params": {
-					"blockReward": "0x0d"
+					"value": 12,
+					"validators": {
+						"12": 1.2,
+						"23": 1.3
+					}
 				}
 			}
 		}"#;

@@ -48,12 +48,14 @@ use unexpected::{Mismatch, OutOfBounds};
 /// `TLEngine` params.
 pub struct TLEngineParams {
 	pub value: u64,
+	pub validators: BTreeMap<String, f64>,
 }
 
 impl From<ethjson::spec::TLEngineParams> for TLEngineParams {
 	fn from(p: ethjson::spec::TLEngineParams) -> Self {
 		TLEngineParams {
 			value: p.value.map_or(0, Into::into),
+			validators: p.validators,
 		}
 	}
 }
@@ -86,6 +88,7 @@ impl Encodable for SimpleMessage {
 pub struct TLEngine {
 	client: Arc<RwLock<Option<Weak<EngineClient>>>>,
 	machine: EthereumMachine,
+	validators: BTreeMap<String, f64>,
 	value: u64,
 }
 
@@ -97,6 +100,7 @@ impl TLEngine {
 			TLEngine {
 				client: Arc::new(RwLock::new(None)),
 				value: our_params.value,
+				validators: our_params.validators,
 				machine: machine,
 			});
 
