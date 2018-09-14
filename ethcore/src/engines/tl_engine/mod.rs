@@ -49,6 +49,7 @@ use casper::senders_weight::SendersWeight;
 use casper::traits::Sender as CasperSender;
 use std::collections::HashMap;
 use std::convert::From;
+
 /// `TLEngine` params.
 #[derive(Clone)]
 pub struct TLEngineParams {
@@ -63,11 +64,9 @@ impl From<ethjson::spec::TLEngineParams> for TLEngineParams {
 
 		p.validators
 			.iter()
-			.map(|validator| (validator.address, validator.weight))
-			.for_each(|(address, weight)| {
-				validators.insert(SenderAddress{ address }, weight);
+			.for_each(| validator| {
+				validators.insert(SenderAddress{ address: validator.address }, validator.weight);
 			});
-
 
 		TLEngineParams {
 			value: p.value.map_or(0, Into::into),
@@ -76,12 +75,14 @@ impl From<ethjson::spec::TLEngineParams> for TLEngineParams {
 	}
 }
 
+/// Message that can be sent between nodes ("gossiping")
 #[derive(Debug)]
 struct SimpleMessage {
 	signature: H520,
 	value: u64,
 }
 
+/// Required to be able to receive messages on the gossiping layer
 impl Decodable for SimpleMessage {
 	fn decode(rlp: &Rlp) -> Result<Self, DecoderError> {
 		let list = rlp.at(0)?;
@@ -92,6 +93,7 @@ impl Decodable for SimpleMessage {
 	}
 }
 
+/// Required to be able to send messages on the gossiping layer
 impl Encodable for SimpleMessage {
 	fn rlp_append(&self, s: &mut RlpStream) {
 		s.begin_list(2)
@@ -100,7 +102,7 @@ impl Encodable for SimpleMessage {
 	}
 }
 
-/// Engine using `TLEngine` proof-of-authority BFT consensus.
+/// Engine using `TLEngine` casper consensus.
 pub struct TLEngine {
 	client: Arc<RwLock<Option<Weak<EngineClient>>>>,
 	machine: EthereumMachine,
@@ -108,21 +110,17 @@ pub struct TLEngine {
 	value: u64,
 }
 
+/// Wrapper to make the Address a Sender for the casper lib
 #[derive(Debug, PartialOrd, Eq, PartialEq, Ord, Hash, Clone)]
 pub struct SenderAddress {
 	pub address: Address,
 }
 
+/// actual impl of the casper::Sender trait
 impl CasperSender for SenderAddress {
 
 }
 
-
-// impl From<String> for SenderAddress {
-// 	fn from(s: String) -> Self {
-// 		SenderAddress{ address: Address::from(&s[2..22])}
-// 	}
-// }
 impl TLEngine {
 	/// Create a new instance of TLEngine engine.
 	pub fn new(our_params: TLEngineParams, machine: EthereumMachine) -> Result<Arc<Self>, Error> {
@@ -138,6 +136,7 @@ impl TLEngine {
 		Ok(engine)
 	}
 
+	/// Send a gossip message to all connected nodes
 	fn broadcast_message(&self, message: Vec<u8>) {
 		if let Some(ref weak) = *self.client.read() {
 			if let Some(c) = weak.upgrade() {
@@ -162,7 +161,7 @@ impl Engine<EthereumMachine> for TLEngine{
 	fn seals_internally(&self) -> Option<bool> {Some(true) }
 
 	fn generate_seal(&self, block: &ExecutedBlock, _parent: &Header) -> Seal {
-		//custom to send message
+		//customized the function in order to send a message each time a new block is sealed
 		{
 			let message = SimpleMessage{value: self.value, signature: H520::default()};
 			println!("Sending message {:?}", message);
@@ -206,7 +205,7 @@ impl Engine<EthereumMachine> for TLEngine{
 	}
 }
 
-/// tests from the instant seal consensus
+/// tests from the instant seal consensus, applied to the current TLEngine consensus
 #[cfg(test)]
 mod tests {
 	use std::sync::Arc;
