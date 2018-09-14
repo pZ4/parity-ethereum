@@ -45,17 +45,33 @@ use ethereum_types::{H256, H520, Address, U128, U256};
 use parking_lot::{Mutex, RwLock};
 use unexpected::{Mismatch, OutOfBounds};
 
+use casper::senders_weight::SendersWeight;
+use casper::traits::Sender as CasperSender;
+use std::collections::HashMap;
+use std::convert::From;
 /// `TLEngine` params.
+#[derive(Clone)]
 pub struct TLEngineParams {
 	pub value: u64,
-	pub validators: BTreeMap<String, f64>,
+	pub validators: HashMap<SenderAddress, f64>,
 }
 
 impl From<ethjson::spec::TLEngineParams> for TLEngineParams {
 	fn from(p: ethjson::spec::TLEngineParams) -> Self {
+
+		let mut validators: HashMap<SenderAddress, f64> = HashMap::new();
+
+		p.validators
+			.iter()
+			.map(|validator| (validator.address, validator.weight))
+			.for_each(|(address, weight)| {
+				validators.insert(SenderAddress{ address }, weight);
+			});
+
+
 		TLEngineParams {
 			value: p.value.map_or(0, Into::into),
-			validators: p.validators,
+			validators: validators,
 		}
 	}
 }
@@ -88,19 +104,34 @@ impl Encodable for SimpleMessage {
 pub struct TLEngine {
 	client: Arc<RwLock<Option<Weak<EngineClient>>>>,
 	machine: EthereumMachine,
-	validators: BTreeMap<String, f64>,
+	validators: SendersWeight<SenderAddress>,
 	value: u64,
 }
 
+#[derive(Debug, PartialOrd, Eq, PartialEq, Ord, Hash, Clone)]
+pub struct SenderAddress {
+	pub address: Address,
+}
 
+impl CasperSender for SenderAddress {
+
+}
+
+
+// impl From<String> for SenderAddress {
+// 	fn from(s: String) -> Self {
+// 		SenderAddress{ address: Address::from(&s[2..22])}
+// 	}
+// }
 impl TLEngine {
 	/// Create a new instance of TLEngine engine.
 	pub fn new(our_params: TLEngineParams, machine: EthereumMachine) -> Result<Arc<Self>, Error> {
+		let senders_weight: SendersWeight<SenderAddress> = SendersWeight::new(our_params.validators);
 		let engine = Arc::new(
 			TLEngine {
 				client: Arc::new(RwLock::new(None)),
 				value: our_params.value,
-				validators: our_params.validators,
+				validators: senders_weight,
 				machine: machine,
 			});
 

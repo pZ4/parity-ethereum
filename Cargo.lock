@@ -163,6 +163,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "casper"
+version = "0.0.0"
+source = "git+ssh://git@gitlab.com/TrueLevel/casper/core-cbc.git#0806cc4ef364667813a00ed6479325043fcaeba3"
+dependencies = [
+ "rayon 1.0.1 (registry+https://github.com/rust-lang/crates.io-index)",
+]
+
+[[package]]
 name = "cc"
 version = "1.0.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -502,6 +510,7 @@ dependencies = [
  "blooms-db 0.1.0",
  "bn 0.4.4 (git+https://github.com/paritytech/bn)",
  "byteorder 1.2.3 (registry+https://github.com/rust-lang/crates.io-index)",
+ "casper 0.0.0 (git+ssh://git@gitlab.com/TrueLevel/casper/core-cbc.git)",
  "common-types 0.1.0",
  "crossbeam 0.3.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "error-chain 0.12.0 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -1974,6 +1983,7 @@ dependencies = [
  "ansi_term 0.10.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "atty 0.2.8 (registry+https://github.com/rust-lang/crates.io-index)",
  "blooms-db 0.1.0",
+ "casper 0.0.0 (git+ssh://git@gitlab.com/TrueLevel/casper/core-cbc.git)",
  "clap 2.29.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "ctrlc 1.1.1 (git+https://github.com/paritytech/rust-ctrlc.git)",
  "daemonize 0.2.3 (git+https://github.com/paritytech/daemonize)",
@@ -3697,6 +3707,7 @@ dependencies = [
 "checksum bn 0.4.4 (git+https://github.com/paritytech/bn)" = "<none>"
 "checksum byteorder 1.2.3 (registry+https://github.com/rust-lang/crates.io-index)" = "74c0b906e9446b0a2e4f760cdb3fa4b2c48cdc6db8766a845c54b6ff063fd2e9"
 "checksum bytes 0.4.6 (registry+https://github.com/rust-lang/crates.io-index)" = "1b7db437d718977f6dc9b2e3fd6fc343c02ac6b899b73fdd2179163447bd9ce9"
+"checksum casper 0.0.0 (git+ssh://git@gitlab.com/TrueLevel/casper/core-cbc.git)" = "<none>"
 "checksum cc 1.0.17 (registry+https://github.com/rust-lang/crates.io-index)" = "49ec142f5768efb5b7622aebc3fdbdbb8950a4b9ba996393cb76ef7466e8747d"
 "checksum cfg-if 0.1.2 (registry+https://github.com/rust-lang/crates.io-index)" = "d4c819a1287eb618df47cc647173c5c4c66ba19d888a6e50d605672aed3140de"
 "checksum chrono 0.4.2 (registry+https://github.com/rust-lang/crates.io-index)" = "1cce36c92cb605414e9b824f866f5babe0a0368e39ea07393b9b63cf3844c0e6"

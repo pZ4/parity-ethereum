@@ -68,10 +68,10 @@ mod tests {
 			"tlengine": {
 				"params": {
 					"value": 12,
-					"validators": {
-						"12": 1.2,
-						"23": 1.3
-					}
+					"validators": [
+						{ "address": "0xc6d9d2cd449a754c494264e1809c50e34d64562b", "weight": 1.2 },
+						{ "address": "0xd6d9d2cd449a754c494264e1809c50e34d64562b", "weight": 0.2 }
+					]
 				}
 			}
 		}"#;

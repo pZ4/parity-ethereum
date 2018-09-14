@@ -17,13 +17,20 @@
 //! Authority params deserialization.
 
 use uint::Uint;
-use std::collections::BTreeMap;
+use ethereum_types::Address;
+
+
+#[derive(Debug, PartialEq, Deserialize)]
+pub struct TLEngineValidatorWeight {
+	pub address: Address,
+	pub weight: f64,
+}
 
 /// Authority params deserialization.
 #[derive(Debug, PartialEq, Deserialize)]
 pub struct TLEngineParams {
 	pub value: Option<Uint>,
-	pub validators: BTreeMap<String, f64>,
+	pub validators: Vec<TLEngineValidatorWeight>,
 }
 
 /// Authority engine deserialization.
@@ -38,42 +45,34 @@ mod tests {
 	use uint::Uint;
 	use serde_json;
 	use spec::tl_engine::TLEngine;
+	use super::TLEngineValidatorWeight;
+	use ethereum_types::Address;
 
 	#[test]
 	fn tl_params_deserialization() {
 		let s = r#"{
 			"params": {
 				"value": 1,
-				"validators": {
-					"0xc6d9d2cd449a754c494264e1809c50e34d64562b": 1.2,
-					"0xd6d9d2cd449a754c494264e1809c50e34d64562b": 0.2
-				}
+				"validators": [
+					{ "address": "0xc6d9d2cd449a754c494264e1809c50e34d64562b", "weight": 1.2 },
+					{ "address": "0xd6d9d2cd449a754c494264e1809c50e34d64562b", "weight": 0.2 }
+				]
 			}
 		}"#;
 
 		let deserialized: TLEngine = serde_json::from_str(s).unwrap();
 		assert_eq!(deserialized.params.value, Some(Uint(1.into())));
 
-		if let Some(weight_c) = deserialized.params.validators.get("0xc6d9d2cd449a754c494264e1809c50e34d64562b") {
-			assert_eq!(*weight_c, 1.2 as f64);
-		}
-		else {
-			panic!("Weight for 0xc6d9d2cd449a754c494264e1809c50e34d64562b not found");
-		}
+		let len = deserialized.params.validators.len();
+		assert_eq!(len, 2);
 
-		if let Some(weight_d) = deserialized.params.validators.get("0xd6d9d2cd449a754c494264e1809c50e34d64562b") {
-			assert_eq!(*weight_d, 0.2 as f64);
-		}
-		else {
-			panic!("Weight for 0xd6d9d2cd449a754c494264e1809c50e34d64562b not found");
-		}
+		let validator: &TLEngineValidatorWeight = &deserialized.params.validators[0];
 
-		// is the "if let None" ugly?
-		if let None = deserialized.params.validators.get("not found") {
-			assert!(true);
-		}
-		else {
-			panic!("Should not be able to find a validator")
-		}
+		assert_eq!(Address::from("0xc6d9d2cd449a754c494264e1809c50e34d64562b"), validator.address);
+		assert_eq!(1.2, validator.weight);
+
+		let validator = &deserialized.params.validators[1];
+		assert_eq!(Address::from("0xd6d9d2cd449a754c494264e1809c50e34d64562b"), validator.address);
+		assert_eq!(0.2, validator.weight);
 	}
 }
