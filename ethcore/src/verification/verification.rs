@@ -202,12 +202,9 @@ fn verify_uncles(block: &PreverifiedBlock, bc: &BlockProvider, engine: &EthEngin
 
 			let depth = if header.number() > uncle.number() { header.number() - uncle.number() } else { 0 };
 
-			// if depth > engine.maximum_uncle_age() as u64 {
-			// 	return Err(From::from(BlockError::UncleTooOld(OutOfBounds { min: Some(header.number() - depth), max: Some(header.number() - 1), found: uncle.number() })));
-			// }
-			// else if depth < 1 {
-			// 	return Err(From::from(BlockError::UncleIsBrother(OutOfBounds { min: Some(header.number() - depth), max: Some(header.number() - 1), found: uncle.number() })));
-			// }
+			if depth > engine.maximum_uncle_age() as u64 {
+				return Err(From::from(BlockError::UncleTooOld(OutOfBounds { min: Some(header.number() - depth), max: Some(header.number() - 1), found: uncle.number() })));
+			}
 
 			// cB
 			// cB.p^1	    1 depth, valid uncle
@@ -223,7 +220,7 @@ fn verify_uncles(block: &PreverifiedBlock, bc: &BlockProvider, engine: &EthEngin
 			let mut expected_uncle_parent = header.parent_hash().clone();
 			let uncle_parent = bc.block_header_data(&uncle.parent_hash()).ok_or_else(|| Error::from(BlockError::UnknownUncleParent(uncle.parent_hash().clone())))?;
 
-			// depth defined above as the difference of block number btw parent and
+			// depth defined above as the difference of block number btw parent and uncle
 			for _ in 0..depth {
 				match bc.block_details(&expected_uncle_parent) {
 					Some(details) => {
@@ -253,6 +250,9 @@ fn verify_uncles(block: &PreverifiedBlock, bc: &BlockProvider, engine: &EthEngin
 					return Err(From::from(BlockError::UncleParentNotInChain(uncle_parent.hash())));
 				}
 			} else {
+				if depth < 1 {
+					return Err(From::from(BlockError::UncleIsBrother(OutOfBounds { min: Some(header.number() - depth), max: Some(header.number() - 1), found: uncle.number() })));
+				}
 				let uncle_parent = uncle_parent.decode()?;
 				verify_parent(&uncle, &uncle_parent, engine)?;
 				engine.verify_block_family(&uncle, &uncle_parent)?;
