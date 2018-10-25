@@ -1193,7 +1193,7 @@ impl BlockChain {
 								acc_excluded.insert(child.clone());
 								acc_ret.push(child);
 							}
-							inner(bc, &child, uncle_generations, acc_excluded, acc_ret, blocking_descendants)
+							inner(bc, &child, uncle_generations - 1, acc_excluded, acc_ret, blocking_descendants)
 						})
 				},
 				_ => (excluded, ret),
