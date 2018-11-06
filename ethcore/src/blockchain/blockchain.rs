@@ -1180,7 +1180,11 @@ impl BlockChain {
 			return None;
 		}
 		// from older blocks into their children, and recurse on
-		fn inner (bc: &BlockChain, parent: &H256, uncle_generations: usize, excluded: HashSet<H256>, ret: Vec<H256>, blocking_descendants: &Vec<H256>) -> (HashSet<H256>, Vec<H256>)  {
+		fn inner (bc: &BlockChain, parent: &H256, uncle_generations: usize, mut excluded: HashSet<H256>, ret: Vec<H256>, blocking_descendants: &Vec<H256>) -> (HashSet<H256>, Vec<H256>)  {
+			if let Some(uncles) = bc.uncle_hashes(parent) {
+				excluded.extend(uncles);
+				excluded.insert(parent.clone());
+			}
 			match bc.block_details(parent) {
 				Some(ref details) if uncle_generations > 0 => {
 					details.children.iter()
@@ -1198,7 +1202,6 @@ impl BlockChain {
 				},
 				_ => (excluded, ret),
 			}
-
 		};
 
 		// from newest blocks into oldest
@@ -1207,12 +1210,8 @@ impl BlockChain {
 		let ret = Vec::new();
 		self.ancestry_iter(parent.clone())
 			.map(|ancestors| ancestors.take(uncle_generations + 1)
-				 .fold((excluded, ret), |(mut acc_excluded, acc_ret), a| {
-					 if let Some(uncles) = self.uncle_hashes(&a) {
-						 acc_excluded.extend(uncles);
-						 acc_excluded.insert(a.clone());
-					 }
-					 inner(self, &a, uncle_generations, acc_excluded.clone(), acc_ret.clone(), &blocking_descendants)
+				 .fold((excluded, ret), |(acc_excluded, acc_ret), a| {
+					 inner(self, &a, uncle_generations, acc_excluded, acc_ret, &blocking_descendants)
 				 }))
 			.map(|(_, ret)| ret)
 	}
