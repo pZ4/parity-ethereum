@@ -250,9 +250,6 @@ fn verify_uncles(block: &PreverifiedBlock, bc: &BlockProvider, engine: &EthEngin
 					return Err(From::from(BlockError::UncleParentNotInChain(uncle_parent.hash())));
 				}
 			} else {
-				if depth < 1 {
-					return Err(From::from(BlockError::UncleIsBrother(OutOfBounds { min: Some(header.number() - depth), max: Some(header.number() - 1), found: uncle.number() })));
-				}
 				let uncle_parent = uncle_parent.decode()?;
 				verify_parent(&uncle, &uncle_parent, engine)?;
 				engine.verify_block_family(&uncle, &uncle_parent)?;
