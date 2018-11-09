@@ -1642,7 +1642,7 @@ mod tests {
 			(b5b.last().header().hash(),  "b5b"),
 		].iter().cloned().collect();
 
-		let uncle_headers = vec![
+		let uncle_hashes = vec![
 			b4b.last().header().hash(),
 			b5c.last().header().hash(),
 			b3b.last().header().hash(),
@@ -1662,8 +1662,12 @@ mod tests {
 		}
 
 		assert_eq!(
-			uncle_headers,
-			bc.find_uncle_headers(&b4a_hash, 3).unwrap().iter().map(|header| header.hash()).map(|b| block_hashes.get(&b).cloned().unwrap()).collect::<Vec<_>>()
+			uncle_hashes,
+			bc.find_uncle_headers(&b4a_hash, 3).unwrap()
+				.iter()
+				.map(|header| header.hash())
+				.map(|b| block_hashes.get(&b).cloned().unwrap())
+				.collect::<Vec<_>>()
 		);
 		// TODO: insert block that already includes one of them as an uncle to check it's not allowed.
 	}

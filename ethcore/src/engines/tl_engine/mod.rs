@@ -136,7 +136,6 @@ impl CasperBlock {
     }
 
     pub fn get_prevblock(&self) -> Option<Self> {
-
         self.0.parent_header.as_ref().cloned()
     }
     pub fn parse_blockchains(
@@ -219,7 +218,7 @@ impl CasperBlock {
     ) -> Option<Self> {
         let (visited, genesis) =
             Self::parse_blockchains(latest_msgs, finalized_msg);
-        CasperBlock::pick_heaviest(&genesis, &visited, senders_weights)
+        Self::pick_heaviest(&genesis, &visited, senders_weights)
             .and_then(|(opt_block, ..)| opt_block)
     }
 }
@@ -337,6 +336,77 @@ impl TLEngine {
 
 		Ok(engine)
 	}
+
+	fn mk_casper_msg(&self, header: &Header) {
+		let parent_block = self.block_msgs.read().get(header.parent_hash()).map(CasperBlock::from);
+		match parent_block {
+			None => {
+				if header.parent_hash() == &H256::from(0) {
+					let genesis_address = CasperAddress { inner: 0x0000000000000000000000000000000000000000.into() };
+					let genesis_block = CasperBlock::new(None, genesis_address.clone());
+					let genesis_msg = BlockMsg::new(genesis_address, Justification::new(), genesis_block);
+
+					// let genesis_msg = self.block_msgs.read().get(&parent.parent_hash()).cloned().unwrap();
+					self.block_msgs.try_write().map(|mut msgs| {
+						msgs.insert(H256::from(0), genesis_msg);
+					});
+				} else {
+					self.client.read().as_ref()
+						.and_then(Weak::upgrade)
+						.and_then(|c| {
+							let client = c.as_full_client().unwrap();
+							client.block_header(BlockId::Hash(*header.parent_hash()))
+								.and_then(|h| h.decode().ok())
+						})
+						.as_ref()
+						.map(|parent| self.mk_casper_msg(parent))
+						.unwrap_or_else(|| println!("Could not unwrap in casper msg!"));
+				}
+				self.mk_casper_msg(header);
+			},
+			Some(parent_block) => {
+				// FIXME: author shouldnt be used for casper msg, as it can differ from the signer (block reward on
+				// a different address then the validating address) or should enforce that address must be signer if
+				// check done on another function (to avoid recovering signer twice)
+				let author = header.author();
+				let casper_address = CasperAddress{ inner: author.clone() };
+				let casper_block = CasperBlock::new(Some(parent_block), casper_address.clone());
+				let block_id = BlockId::Hash(header.hash());
+				let uncles: Vec<_> = self.client.read().as_ref()
+					.and_then(Weak::upgrade)
+					.map(|c| {
+						let client = c.as_full_client().unwrap();
+						(0..)
+							.map(|i| client.uncle(UncleId { block: block_id, position: i })
+								 .and_then(|u| u.decode().ok())
+								 .map(|u| u.hash()))
+							.take_while(|u| u.is_some())
+							.filter_map(|u| u)
+							.collect()
+					})
+					.unwrap();
+				println!("uncles: {:?}", uncles);
+				let mut msgs_for_justification: Vec<_> = uncles.iter().map(|uncle| {
+					self.block_msgs.read().get(&uncle).cloned()
+						.expect("uncle should be in otherwise block wouldn't verify")
+				}).collect();
+				self.block_msgs.read()
+					.get(&header.parent_hash()).cloned()
+					.map(|parent| msgs_for_justification.push(parent));
+				let (justification, mut new) = Justification::from_msgs(
+					msgs_for_justification,
+					&self.sender_state.read()
+				);
+				let msg = BlockMsg::new(casper_address, justification, casper_block);
+				new.get_latest_msgs_as_mut().update(&msg);
+				*self.sender_state.write() = new;
+
+				println!("msg: {:?}", msg);
+				// println!("block: {:?}", CasperBlock::from(&msg));
+				self.block_msgs.try_write().map(|mut msgs| msgs.insert(header.hash(), msg));
+			}
+		}
+	}
 }
 
 
@@ -353,7 +423,50 @@ impl Engine<EthereumMachine> for TLEngine {
 	fn seal_fields(&self, _header: &Header) -> usize { 1 }
 
 	fn fork_choice(&self, new: &ExtendedHeader, current: &ExtendedHeader) -> super::ForkChoice {
-		super::total_difficulty_fork_choice(new, current)
+
+		// // let parent_block = self.block_msgs.read().get(&new.header.parent_hash()).map(CasperBlock::from);
+
+		// // if parent_block.is_none() {
+		// // 	panic!("unknown parent block");
+		// // }
+
+		let mut new_block = self.block_msgs.read().get(&new.header.hash()).map(CasperBlock::from);
+		if new_block.is_none() {
+			self.mk_casper_msg(&new.header);
+		    new_block = self.block_msgs.read().get(&new.header.hash()).map(CasperBlock::from);
+		}
+
+		let latest_honest_msgs = LatestMsgsHonest::from_latest_msgs(
+			self.sender_state.read().get_latest_msgs(),
+			self.sender_state.read().get_equivocators(),
+		);
+		let best_block = CasperBlock::ghost(
+			&latest_honest_msgs,
+			None,
+			self.sender_state.read().get_senders_weights(),
+		);
+
+		if new_block.is_none() {panic!("new_block doesnt exist")}
+		let current_block = self.block_msgs.read().get(&current.header.hash()).map(CasperBlock::from);
+		if current_block.is_none() {panic!("current_block doesnt exist")}
+
+		let best_block = &best_block.expect("unwrapping best_block");
+		let new_block = &new_block.expect("unwrap new");
+		let current_block = &current_block.expect("unwrap current");
+
+
+		println!("\nsenders_weight: {:?}", self.sender_state.read().get_senders_weights());
+		println!("\nbest_block {:?}", best_block);
+		println!("\nnew_block {:?}", new_block);
+		println!("\ncurrent_block {:?}", current_block);
+
+		if best_block == new_block { super::ForkChoice::New }
+		else if best_block == current_block { super::ForkChoice::Old }
+		else {
+			panic!("Block picked on forkchoice rule not available in fork_choice fun \n best: {:?} \n new: {:?} \n current: {:?} \n ", best_block, new, current);
+		}
+
+		// super::total_difficulty_fork_choice(new, current)
 	}
 
 	fn maximum_uncle_count(&self, _block: BlockNumber) -> usize { 40 }
@@ -365,100 +478,105 @@ impl Engine<EthereumMachine> for TLEngine {
 	}
 
 
+
+
 	/// Phase 3 verification. Check block information against parent. Returns either a null `Ok` or a general error detailing the problem with import.
 	fn verify_block_family(&self, header: &Header, parent: &Header) -> Result<(), <EthereumMachine as ::parity_machine::Machine>::Error> {
+		println!("block_family");
+		// fn inner(engine: &TLEngine, child: &Header, parent: &Header) {
+		// 	// FIXME: author shouldnt be used for casper msg, as it can differ from the signer
+		// 	// (block reward on a different address then the validating address)
+		// 	// let parent_hash = parent.parent_hash();
+		// 	// println!("parent_hash: {:?}", parent_hash);
+		// 	// let height = header.number();
 
-		fn inner(engine: &TLEngine, child: &Header, parent: &Header) {
-			// FIXME: author shouldnt be used for casper msg, as it can differ from the signer
-			// (block reward on a different address then the validating address)
-			// let parent_hash = parent.parent_hash();
-			// println!("parent_hash: {:?}", parent_hash);
-			// let height = header.number();
+		// 	// get a CasperBlock out of a BlockMsg
+		// 	let parent_block = engine.block_msgs.read().get(&parent.hash()).map(CasperBlock::from);
 
-			// get a CasperBlock out of a BlockMsg
-			let parent_block = engine.block_msgs.read().get(&parent.hash()).cloned().as_ref().map(CasperBlock::from);
+		// 	match parent_block {
+		// 		None => {
+		// 			println!("parent_hash: {:?}", parent.hash());
+		// 			println!("grandp_hash: {:?}", parent.parent_hash());
 
-			match parent_block {
-				None => {
-					println!("parent_hash: {:?}", parent.hash());
-					println!("grandp_hash: {:?}", parent.parent_hash());
+		// 			// genesis TODO: genesis hash should not be hardcoded
+		// 			if parent.parent_hash() == &H256::from(0) {
+		// 				let genesis_address = CasperAddress { inner: 0x0000000000000000000000000000000000000000.into() };
+		// 				let genesis_block = CasperBlock::new(None, genesis_address.clone());
+		// 				let genesis_msg = BlockMsg::new(genesis_address, Justification::new(), genesis_block);
 
-					// genesis TODO: genesis hash should not be hardcoded
-					if parent.parent_hash() == &H256::from(0) {
-						let genesis_address = CasperAddress { inner: 0x0000000000000000000000000000000000000000.into() };
-						let genesis_block = CasperBlock::new(None, genesis_address.clone());
-						let genesis_msg = BlockMsg::new(genesis_address, Justification::new(), genesis_block);
+		// 				// let genesis_msg = engine.block_msgs.read().get(&parent.parent_hash()).cloned().unwrap();
+		// 				engine.block_msgs.try_write().map(|mut msgs| {
+		// 					msgs.insert(parent.hash(), genesis_msg);
+		// 				});
+		// 			} else {
+		// 				engine.client.read().as_ref()
+		// 					.and_then(Weak::upgrade)
+		// 					.and_then(|c| {
+		// 						let client = c.as_full_client().unwrap();
+		// 						client.block_header(BlockId::Hash(*parent.parent_hash()))
+		// 							.and_then(|h| h.decode().ok())
+		// 					})
+		// 					.as_ref()
+		// 					.map(|grandparent| inner(engine, parent, grandparent))
+		// 					.unwrap_or_else(|| println!("Could not unwrap in casper msg!"));
+		// 			}
 
-						// let genesis_msg = engine.block_msgs.read().get(&parent.parent_hash()).cloned().unwrap();
-						engine.block_msgs.try_write().map(|mut msgs| {
-							msgs.insert(parent.hash(), genesis_msg);
-						});
-					} else {
-						engine.client.read().as_ref()
-							.and_then(Weak::upgrade)
-							.and_then(|c| {
-								let client = c.as_full_client().unwrap();
-								client.block_header(BlockId::Hash(*parent.parent_hash()))
-									.and_then(|h| h.decode().ok())
-							})
-							.as_ref()
-							.map(|grandparent| inner(engine, parent, grandparent))
-							.unwrap_or_else(|| println!("Could not unwrap in casper msg!"));
-					}
+		// 			// the dependencies should have been sorted out above, now we can call the same function with the
+		// 			// same arguments, and it will fall in the Some branch of the pattern matching and do its side
+		// 			// effects
+		// 			 inner(engine, child, parent);
+		// 		},
+		// 		Some(parent_block) => {
+		// 			// FIXME: author shouldnt be used for casper msg, as it can differ from the signer (block reward on
+		// 			// a different address then the validating address) or should enforce that address must be signer if
+		// 			// check done on another function (to avoid recovering signer twice)
+		// 			let author_child = child.author();
+		// 			let casper_address = CasperAddress{ inner: author_child.clone() };
+		// 			let casper_block = CasperBlock::new(Some(parent_block), casper_address.clone());
+		// 			let block_id = BlockId::Hash(child.hash());
+		// 			let uncles: Vec<_> = engine.client.read().as_ref()
+		// 				.and_then(Weak::upgrade)
+		// 				.map(|c| {
+		// 					let client = c.as_full_client().unwrap();
+		// 					(0..)
+		// 						.map(|i| client.uncle(UncleId { block: block_id, position: i })
+		// 							.and_then(|u| u.decode().ok())
+		// 							.map(|u| u.hash()))
+		// 						.take_while(|u| u.is_some())
+		// 						.filter_map(|u| u)
+		// 						.collect()
+		// 				})
+		// 				.unwrap();
+		// 			println!("uncles: {:?}", uncles);
+		// 			let mut msgs_for_justification: Vec<_> = uncles.iter().map(|uncle| {
+		// 				engine.block_msgs.read().get(&uncle).cloned()
+		// 					.expect("uncle should be in otherwise block wouldn't verify")
+		// 			}).collect();
+		// 			engine.block_msgs.read()
+		// 				.get(&parent.hash()).cloned()
+		// 				.map(|parent| msgs_for_justification.push(parent));
+		// 			let (justification, new) = Justification::from_msgs(
+		// 				msgs_for_justification,
+		// 				&engine.sender_state.read()
+		// 			);
 
-					// the dependencies should have been sorted out above, now we can call the same function with the
-					// same arguments, and it will fall in the Some branch of the pattern matching and do its side
-					// effects
-					 inner(engine, child, parent);
-				},
-				Some(parent_block) => {
-					// FIXME: author shouldnt be used for casper msg, as it can differ from the signer
-					// (block reward on a different address then the validating address) or should enforce that address must be signer on check of another function
-					let author_child = child.author();
-					let casper_address = CasperAddress{ inner: author_child.clone() };
-					let casper_block = CasperBlock::new(Some(parent_block), casper_address.clone());
-					let block_id = BlockId::Hash(child.hash());
-					let uncles: Vec<_> = engine.client.read().as_ref()
-						.and_then(Weak::upgrade)
-						.map(|c| {
-							let client = c.as_full_client().unwrap();
-							(0..)
-								.map(|i| client.uncle(UncleId { block: block_id, position: i })
-									.and_then(|u| u.decode().ok())
-									.map(|u| u.hash()))
-								.take_while(|u| u.is_some())
-								.filter_map(|u| u)
-								.collect()
-						})
-						.unwrap();
-					println!("uncles: {:?}", uncles);
-					let mut msgs_for_justification: Vec<_> = uncles.iter().map(|uncle| {
-						engine.block_msgs.read().get(&uncle).cloned().expect("uncle should be in otherwise block wouldn't verify")
-					}).collect();
-					engine.block_msgs.read()
-						.get(&parent.hash()).cloned()
-						.map(|parent| msgs_for_justification.push(parent));
-					let (justification, new) = Justification::from_msgs(
-						msgs_for_justification,
-						&engine.sender_state.read()
-					);
+		// 			*engine.sender_state.write() = new;
 
-					*engine.sender_state.write() = new;
+		// 			let msg = BlockMsg::new(casper_address, justification, casper_block);
+		// 			println!("msg: {:?}", msg);
+		// 			println!("block: {:?}", CasperBlock::from(&msg));
+		// 			engine.block_msgs.try_write().map(|mut msgs| msgs.insert(child.hash(), msg));
+		// 		}
+		// 	}
+		// }
 
-					let msg = BlockMsg::new(casper_address, justification, casper_block);
-					println!("msg: {:?}", msg);
-					println!("block: {:?}", CasperBlock::from(&msg));
-					engine.block_msgs.try_write().map(|mut msgs| msgs.insert(child.hash(), msg));
-				}
-			}
-		}
-
-		inner(self, header, parent);
+		// inner(self, header, parent);
 		Ok(())
 	}
 
 
 	fn verify_block_basic(&self, header: &<EthereumMachine as ::parity_machine::Machine>::Header) -> Result<(), <EthereumMachine as ::parity_machine::Machine>::Error> {
+		println!("verify_block_basic");
 		let found_seal_len = header.seal().len();
 		let expected_seal_len = self.seal_fields(header);
 		if found_seal_len != expected_seal_len {
@@ -482,12 +600,12 @@ impl Engine<EthereumMachine> for TLEngine {
 
 		// // println!("seal: {:?}", header.seal());
 
-		// //// TODO pZ4: turn on sig verification
-		// // // Check if the signature belongs to a validator, can depend on parent state.
-		// // let seal = &header.seal();
-		// // let header_signature = seal.get(0).ok_or(BlockError::InvalidSeal)?;
-		// // let sig = Rlp::new(header_signature).as_val::<H520>()?;
-		// // let signer = ethkey::public_to_address(&ethkey::recover(&sig.into(), &header.hash())?);
+		//// TODO pZ4: turn on sig verification
+		// // Check if the signature belongs to a validator, can depend on parent state.
+		// let seal = &header.seal();
+		// let header_signature = seal.get(0).ok_or(BlockError::InvalidSeal)?;
+		// let sig = Rlp::new(header_signature).as_val::<H520>()?;
+		// let signer = ethkey::public_to_address(&ethkey::recover(&sig.into(), &header.hash())?);
 
 		// // if *author != signer {
 		// // 	return Err(EngineError::NotAuthorized(*author).into())
@@ -506,11 +624,14 @@ impl Engine<EthereumMachine> for TLEngine {
 		_epoch_begin: bool,
 		_ancestry: &mut Iterator<Item=<EthereumMachine as ::parity_machine::Machine>::ExtendedHeader>,
 	) -> Result<(), <EthereumMachine as ::parity_machine::Machine>::Error> {
+		println!("on_new_block");
 		Ok(())
 	}
 
 	/// Block transformation functions, after the transactions.
 	fn on_close_block(&self, block: &mut <EthereumMachine as ::parity_machine::Machine>::LiveBlock) -> Result<(), <EthereumMachine as ::parity_machine::Machine>::Error> {
+		println!("on_close_block");
+		// TODO: block reward, slashing, adding / removing validators from the set should be done here
 		Ok(())
 	}
 
