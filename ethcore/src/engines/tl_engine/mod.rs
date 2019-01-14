@@ -15,6 +15,7 @@
 // along with Parity.  If not, see <http://www.gnu.org/licenses/>.
 
 
+
 use std::collections::{BTreeMap, HashSet, VecDeque};
 use std::fmt;
 use std::iter::FromIterator;
@@ -181,11 +182,11 @@ impl CasperBlock {
         visited: &HashMap<CasperBlock, HashSet<CasperBlock>>,
         weights: &SendersWeight<CasperAddress>,
     ) -> Option<(Option<Self>, WeightUnit, HashSet<Self>)> {
-        let init = Some((None, WeightUnit::ZERO, HashSet::new()));
+        let init = Some((None::<CasperBlock>, WeightUnit::ZERO, HashSet::new()));
         let heaviest_child = blocks.iter().fold(init, |best, block| {
             best.and_then(|best| {
                 visited.get(&block).map(|children| (best, children))
-            }).map(|((b_block, b_weight, b_children), children)| {
+            }).and_then(|((b_block, b_weight, b_children), children)| {
                 let mut referred_senders: HashSet<_> =
                     children.iter().map(Self::get_sender).collect();
                 // add current block sender such that its weight counts too
@@ -193,9 +194,17 @@ impl CasperBlock {
                 let weight = weights.sum_weight_senders(&referred_senders);
                 // TODO: break ties with blockhash
                 if weight > b_weight {
-                    (Some(block.clone()), weight, children.clone())
+                    Some((Some(block.clone()), weight, children.clone()))
+                } else if weight < b_weight {
+                    Some((b_block, b_weight, b_children))
                 } else {
-                    (b_block, b_weight, b_children)
+                    // break ties with blockhash
+                    let ord = b_block.as_ref().map(|b| b.cmp(block));
+                    match ord {
+                        Some(std::cmp::Ordering::Greater) => Some((Some(block.clone()), weight, children.clone())),
+                        Some(std::cmp::Ordering::Less) => Some((b_block, b_weight, b_children)),
+                        _ => None,
+                    }
                 }
             })
         });
@@ -373,35 +382,40 @@ impl TLEngine {
 						c.as_full_client().map(|client|
 							(0..)
 								.map(|i| client.uncle(UncleId { block: block_id, position: i })
-									 .and_then(|u| u.decode().ok())
-									 .map(|u| u.hash()))
+									 .and_then(|u| u.decode().ok()))
+									 // .map(|u| u.hash()))
 								.take_while(|u| u.is_some())
 								.filter_map(|u| u)
 								.collect()
 						)})
 					.expect("full client must be available");
-				println!("uncles: {:?}", uncles);
-				let mut msgs_for_justification: Vec<_> = uncles.iter().map(|uncle| {
-					self.block_msgs.read().get(&uncle).cloned()
-						.expect("uncle should be in otherwise block wouldn't verify")
-				}).collect();
-				self.block_msgs.read()
-					.get(&header.parent_hash()).cloned()
-					.map(|parent| msgs_for_justification.push(parent));
-				let (justification, mut new) = Justification::from_msgs(
-					msgs_for_justification,
-					&self.sender_state.read()
-				);
-				let msg = BlockMsg::new(casper_address, justification, casper_block);
+				info!("uncles: {:?}", uncles.iter().map(|u| u.hash()).collect::<Vec<_>>());
+				if uncles.iter().all(|uncle| self.block_msgs.read().get(&uncle.hash()).cloned().is_some()) {
+					let mut msgs_for_justification: Vec<_> = uncles.iter().map(|uncle| {
+						self.block_msgs.read().get(&uncle.hash()).cloned()
+							.expect("uncle should be in otherwise block wouldn't verify")
+					}).collect();
 
-				// inject the newly converted msg to the latest_msgs, as that will be used for the forkchoice rule
-				new.get_latest_msgs_as_mut().update(&msg);
 
-				*self.sender_state.write() = new;
+					self.block_msgs.read()
+						.get(&header.parent_hash()).cloned()
+						.map(|parent| msgs_for_justification.push(parent));
+					let (justification, mut new) = Justification::from_msgs(
+						msgs_for_justification,
+						&self.sender_state.read()
+					);
+					let msg = BlockMsg::new(casper_address, justification, casper_block);
 
-				println!("msg: {:?}", msg);
-				// println!("block: {:?}", CasperBlock::from(&msg));
-				self.block_msgs.try_write().map(|mut msgs| msgs.insert(header.hash(), msg));
+					// inject the newly converted msg to the latest_msgs, as that will be used for the forkchoice rule
+					new.get_latest_msgs_as_mut().update(&msg);
+
+					*self.sender_state.write() = new;
+
+					// println!("msg: {:?}", msg);
+					// println!("block: {:?}", CasperBlock::from(&msg));
+					self.block_msgs.try_write().map(|mut msgs| msgs.insert(header.hash(), msg));
+				}
+				else {println!("Some uncle was not converted into a CasperMsg yet")}
 			}
 		}
 	}
@@ -421,6 +435,7 @@ impl Engine<EthereumMachine> for TLEngine {
 	fn seal_fields(&self, _header: &Header) -> usize { 1 }
 
 	fn fork_choice(&self, new: &ExtendedHeader, current: &ExtendedHeader) -> super::ForkChoice {
+		println!("fork_choice");
 		let _ = self.mk_casper_msg(&new.header);
 		let new_block = self.block_msgs.read().get(&new.header.hash()).map(CasperBlock::from);
 		let latest_honest_msgs = LatestMsgsHonest::from_latest_msgs(
@@ -457,9 +472,9 @@ impl Engine<EthereumMachine> for TLEngine {
 		}
 	}
 
-	fn maximum_uncle_count(&self, _block: BlockNumber) -> usize { 40 }
+	fn maximum_uncle_count(&self, _block: BlockNumber) -> usize { 10_000 }
 
-	fn maximum_uncle_age(&self) -> usize { 10 }
+	fn maximum_uncle_age(&self) -> usize { 10_000 }
 
 	fn seals_internally(&self) -> Option<bool> {
 		Some(self.signer.read().is_some())
@@ -468,12 +483,12 @@ impl Engine<EthereumMachine> for TLEngine {
 
 	/// Phase 3 verification. Check block information against parent. Returns either a null `Ok` or a general error detailing the problem with import.
 	fn verify_block_family(&self, header: &Header, parent: &Header) -> Result<(), <EthereumMachine as ::parity_machine::Machine>::Error> {
-		// println!("block_family");
+		println!("block_family");
 		Ok(())
 	}
 
 	fn verify_block_basic(&self, header: &<EthereumMachine as ::parity_machine::Machine>::Header) -> Result<(), <EthereumMachine as ::parity_machine::Machine>::Error> {
-		// println!("verify_block_basic");
+		println!("verify_block_basic");
 		let found_seal_len = header.seal().len();
 		let expected_seal_len = self.seal_fields(header);
 		if found_seal_len != expected_seal_len {
@@ -507,18 +522,20 @@ impl Engine<EthereumMachine> for TLEngine {
 		_epoch_begin: bool,
 		_ancestry: &mut Iterator<Item=<EthereumMachine as ::parity_machine::Machine>::ExtendedHeader>,
 	) -> Result<(), <EthereumMachine as ::parity_machine::Machine>::Error> {
-		// println!("on_new_block");
+		println!("on_new_block");
 		Ok(())
 	}
 
 	/// Block transformation functions, after the transactions.
 	fn on_close_block(&self, _block: &mut <EthereumMachine as ::parity_machine::Machine>::LiveBlock) -> Result<(), <EthereumMachine as ::parity_machine::Machine>::Error> {
-		// println!("on_close_block");
+		println!("on_close_block");
 		// TODO: block reward, slashing, adding / removing validators from the set should be done here
 		Ok(())
 	}
 
 	fn generate_seal(&self, block: &<EthereumMachine as ::parity_machine::Machine>::LiveBlock, _parent: &Header) -> Seal {
+		println!("generate seal");
+
 		self.sign(block.header().bare_hash())
 			.map(|raw_sig| ::rlp::encode(&(&H520::from(raw_sig) as &[u8])).into_vec())
 			.map(|sig| Seal::Regular(vec![sig]))
