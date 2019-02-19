@@ -415,7 +415,6 @@ impl TLEngine {
 					// println!("block: {:?}", CasperBlock::from(&msg));
 					self.block_msgs.try_write().map(|mut msgs| msgs.insert(header.hash(), msg));
 				}
-				else {println!("Some uncle was not converted into a CasperMsg yet")}
 			}
 		}
 	}
@@ -535,7 +534,10 @@ impl Engine<EthereumMachine> for TLEngine {
 
 	fn generate_seal(&self, block: &<EthereumMachine as ::parity_machine::Machine>::LiveBlock, _parent: &Header) -> Seal {
 		println!("generate seal");
+<<<<<<< HEAD
 
+=======
+>>>>>>> make sure uncle block imported before its dependencies
 		self.sign(block.header().bare_hash())
 			.map(|raw_sig| ::rlp::encode(&(&H520::from(raw_sig) as &[u8])).into_vec())
 			.map(|sig| Seal::Regular(vec![sig]))
@@ -543,7 +545,6 @@ impl Engine<EthereumMachine> for TLEngine {
 				println!("Failed to sign in generate_seal!, {:?}", e);
 				Seal::None
 			})
-
 	}
 
 	fn open_block_header_timestamp(&self, parent_timestamp: u64) -> u64 {
